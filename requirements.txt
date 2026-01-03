@@ -1,0 +1,7 @@
+streamlit
+pykrx
+pandas
+setuptools
+requests
+plotly
+tqdm

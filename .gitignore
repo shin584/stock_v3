@@ -1,0 +1,22 @@
+# Secrets
+secrets.json
+*.key
+*.pem
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+
+# Legacy folders (User requested to only upload stock_v2)
+market_logic_kis/
+market_logic_krx_v2/
+market_logic_old/
+test/
+
+# IDE
+.vscode/
+.idea/
