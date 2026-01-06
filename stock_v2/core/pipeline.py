@@ -70,23 +70,22 @@ class MarketScanner:
         # 교집합 종목만 추출
         p2_final = df_positive[df_positive['code'].isin(intersection)].copy()
         
+        # [필터] 외국인 2일 이상 연속 매수 종목만 유지
+        if not p2_final.empty:
+            p2_final = p2_final[p2_final['consecutive_days'] >= 2]
+            
+        # [필터] 개인 2일 이상 연속 순매도 종목만 유지 (손바뀜 확인)
+        if not p2_final.empty and 'consecutive_personal_sell_days' in p2_final.columns:
+            p2_final = p2_final[p2_final['consecutive_personal_sell_days'] >= 2]
+
         # P2 단계 분류 (Stage Classification)
         def classify_stage(row):
             days = row.get('consecutive_days', 0)
             disp = row.get('이격도', 0)
             
-            # 3. 과열/주의 (Overheated)
-            # 외국인 연속 순매수 10일 이상 OR 이격도 120% 이상
-            if days >= 10 or disp >= 120:
-                return "🔥과열/주의"
-                
-            # 2. 추세 확정 (Trend Confirmation)
-            # 외국인 연속 순매수 5~9일 AND 이격도 105~115%
-            if 5 <= days <= 9 and 105 <= disp <= 115:
-                return "🚀추세확정"
-                
-            # 1. 초기 포착 (Early Detection)
+            # [수정] 오직 '초기 포착' 단계만 식별
             # 외국인 연속 순매수 2~4일 AND 이격도 105% 이하
+            # (나머지 과열/추세확정은 모두 제외대상 처리)
             if 2 <= days <= 4 and disp <= 105:
                 return "🌱초기포착"
                 
@@ -94,12 +93,38 @@ class MarketScanner:
 
         if not p2_final.empty:
             p2_final['stage'] = p2_final.apply(classify_stage, axis=1)
+            
+            # [필터 적용] "초기포착" 단계만 남기고 나머지 제외 (사용자 요청)
+            # 이유: 이미 급등한 종목(과열/추세확정)보다는, 이제 막 상승 초입에 들어선 안전한 종목만 공략하기 위함
+            p2_final = p2_final[p2_final['stage'] == "🌱초기포착"]
 
         # 연속 매수 일수 내림차순 정렬
-        if 'consecutive_days' in p2_final.columns:
+        if not p2_final.empty and 'consecutive_days' in p2_final.columns:
             p2_final = p2_final.sort_values(by='consecutive_days', ascending=False)
             
         return p2_final
+
+    def filter_p3_stocks(self, df_results):
+        """
+        P3 (바닥 반등주) 필터링 로직
+        - Strategy에서 is_p3=True로 마킹된 종목들 추출 (독립적 필터링)
+        - 정렬: 외국인 순매수 강도(금액) 또는 시가총액 순
+        """
+        if df_results.empty:
+            return pd.DataFrame()
+
+        # [수정] priority가 아닌 is_p3 플래그를 사용하여 다른 전략(P1, P2)과 중복되더라도 추출
+        if 'is_p3' not in df_results.columns:
+            return pd.DataFrame()
+            
+        p3_final = df_results[df_results['is_p3'] == True].copy()
+        
+        if not p3_final.empty:
+            # 외국인 순매수금액 내림차순 정렬 (수급 강도 중요)
+            if '외국인순매수' in p3_final.columns:
+                p3_final = p3_final.sort_values(by='외국인순매수', ascending=False)
+                
+        return p3_final
 
     def run_scan(self, market_type="KOSPI", top_n=100, target_date=None, progress_callback=None):
         """
@@ -126,7 +151,8 @@ class MarketScanner:
             ticker = row['code']
             name = row['name']
             
-            # KIS API로 데이터 조회 (120일치 일봉)
+            # KIS API로 데이터 조회 (120일치 일봉으로 복귀)
+            # P3 전략의 120일선 조건이 삭제되었으므로, 불필요한 데이터 요청을 줄임
             df, error = self.data_fetcher.get_stock_data(ticker, days=120, end_date=target_date)
             
             if error:
@@ -147,6 +173,7 @@ class MarketScanner:
             # 외국인 순매수 정보 업데이트 (KIS 데이터 사용)
             current_foreign_buy = df.iloc[-1].get('외국인_순매수금액', 0)
             current_inst_buy = df.iloc[-1].get('기관_순매수금액', 0)
+            current_personal_buy = df.iloc[-1].get('개인_순매수금액', 0)
             
             if analysis_result['score'] > 0:
                 return {
@@ -156,6 +183,7 @@ class MarketScanner:
                     '등락률': float(df.iloc[-1]['등락률']),
                     '외국인순매수': current_foreign_buy,
                     '기관순매수': current_inst_buy,
+                    '개인순매수': current_personal_buy,
                     '시가총액': cap,
                     '이격도': disparity,
                     **analysis_result
@@ -183,25 +211,11 @@ class MarketScanner:
             result_df = pd.DataFrame(results)
             
             # P1(1순위) 필터링 및 재정렬 로직
-            # 1. P1 후보군(priority=1) 추출
-            p1_candidates = result_df[result_df['priority'] == 1].copy()
-            
-            # 2. 기여도 점수(contribution) 기준 내림차순 정렬 후 상위 5개 선정
-            if not p1_candidates.empty:
-                p1_top5 = p1_candidates.sort_values(by='contribution', ascending=False).head(5)
-                # 선정된 5개만 남기고 나머지는 P1 자격 박탈 (또는 제외)
-                # 여기서는 P1은 오직 Top 5만 인정
-                p1_codes = p1_top5['code'].tolist()
-                
-                # 전체 결과에서 P1이면서 Top 5에 들지 못한 종목은 제외하거나 우선순위 조정
-                # 여기서는 간단하게 P1은 Top 5만 남기고 나머지는 제거하는 방식으로 구현
-                # (P2, P3는 그대로 유지)
-                
-                # P1이 아니거나(P2, P3), P1이면서 Top 5에 든 종목만 유지
-                result_df = result_df[
-                    (result_df['priority'] != 1) | 
-                    (result_df['code'].isin(p1_codes))
-                ]
+            # [수정] P1 Top 5 필터링 제거
+            # 이유: 여기서 P1 Top 5가 아니라고 삭제해버리면, 
+            # P2(수급주) 조건은 만족하지만 P1 Top 5에는 들지 못한 종목(예: NAVER)이 
+            # 아예 결과에서 누락되는 문제가 발생함.
+            # 따라서 모든 후보군을 반환하고, Top 5 선정은 run_analysis.py의 P1 처리 단계에서 수행하도록 함.
             
             # 최종 정렬: 우선순위(1->2->3), 기여도(높은순), 점수(높은순)
             # P1은 기여도순, P2/P3는 점수순이므로 복합 정렬 필요하지만

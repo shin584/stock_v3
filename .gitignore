@@ -1,5 +1,6 @@
 # Secrets
 secrets.json
+kis_token.json
 *.key
 *.pem
 

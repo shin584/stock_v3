@@ -60,17 +60,51 @@ class StockStrategy:
                 
         # P2 후보군 조건: 일단 양매수 여부는 Pipeline에서 Top 50 교집합으로 거르므로
         # 여기서는 연속 매수 일수만 계산해서 반환하고, 
-        # 기본적으로 '후보' 자격(True)을 부여함.
-        # 단, 오늘 순매수가 마이너스라면 연속일수가 0일 것이므로 자연스럽게 탈락 가능성 높음.
+        # 단, 연속 일수가 0일 경우(오늘 순매도)에는 후보 자격 없음.
         
-        return True, f"외인연속:{consecutive_days}일", consecutive_days
+        if consecutive_days > 0:
+            return True, f"외인연속:{consecutive_days}일", consecutive_days
+            
+        return False, "외인순매도", 0
 
     def check_p3_rebound(self, df: pd.DataFrame) -> Tuple[bool, str]:
         """
-        [P3] 반등주 (Rebound)
-        - 과매도 구간에서 반등을 노리는 종목
+        [P3] 바닥 반등주 (Rebound)
+        1. 수급: 외국인 3일 연속 순매수
+        2. 상태: 이격도(20일선 기준) 98% 이하
+        3. 트리거: 오늘 양봉
         """
-        # TODO: 사용자가 정의할 P3 로직 구현 위치
+        if df.empty or len(df) < 20:
+            return False, ""
+            
+        current = df.iloc[-1]
+        close = current['종가']
+        open_price = current['시가']
+             
+        # 3. 트리거: 오늘 양봉 (종가 > 시가)
+        if close <= open_price:
+            return False, ""
+            
+        # 2. 상태: 이격도 98% 이하 (20일선 대비)
+        ma20 = current.get('MA20', 0)
+        disparity = (close / ma20 * 100) if ma20 > 0 else 0
+        if disparity > 98:
+            return False, ""
+            
+        # 2. 수급: 외국인 2일 연속 순매수
+        consecutive_days = 0
+        if '외국인_순매수금액' in df.columns:
+            for i in range(len(df) - 1, -1, -1):
+                val = df.iloc[i]['외국인_순매수금액']
+                if val > 0:
+                    consecutive_days += 1
+                else:
+                    break
+        
+        # (루프 밖에서 체크)
+        if consecutive_days >= 2:
+            return True, f"바닥반등(이격{disparity:.0f}%)"
+            
         return False, ""
 
     def analyze(self, df: pd.DataFrame, cap: float = 0) -> Dict[str, Any]:
@@ -106,6 +140,16 @@ class StockStrategy:
                 priority = 2
             reasons.append(f"[P2] {reason_p2}")
             
+        # [추가] 개인 연속 순매도 일수 계산
+        consec_personal_sell = 0
+        if '개인_순매수금액' in df.columns:
+            for i in range(len(df) - 1, -1, -1):
+                val = df.iloc[i]['개인_순매수금액']
+                if val < 0: # 순매도 (음수)
+                    consec_personal_sell += 1
+                else:
+                    break
+            
         # P3 체크
         is_p3, reason_p3 = self.check_p3_rebound(df)
         if is_p3:
@@ -119,5 +163,9 @@ class StockStrategy:
             "priority": priority if score > 0 else None,
             "reasons": ", ".join(reasons) if reasons else "-",
             "contribution": contribution,
-            "consecutive_days": consec_days if is_p2 else 0
+            "consecutive_days": consec_days if is_p2 else 0,
+            "consecutive_personal_sell_days": consec_personal_sell,
+            "is_p1": is_p1,
+            "is_p2": is_p2,
+            "is_p3": is_p3
         }

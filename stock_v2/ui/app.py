@@ -38,9 +38,10 @@ with tab1:
         * **P2 (수급 주도주)**: 외국인/기관 양매수 집중 종목
           - **조건**: (외국인 순매수 Top 50 ∩ 기관 순매수 Top 50) AND (양매수 필수)
           - **분류**:
-            - **🌱 초기포착**: 외인 연속 2-4일 & 이격도 105% 이하
-            - **🚀 추세확정**: 외인 연속 5-9일 & 이격도 105-115%
-            - **🔥 과열/주의**: 외인 연속 10일↑ OR 이격도 120%↑
+            - **🌱 초기포착**: 외인 연속 2-4일 & 이격도 105% 이하 (상승 초기 종목만 엄선)
+            
+        * **P3 (바닥 반등주)**: 역배열 하락 추세 중 외국인 저점 매집
+          - **조건**: (이격도 98%이하) AND (외인 2일연속 매수) AND (오늘 양봉)
         """)
 
     col1, col2 = st.columns(2)
@@ -169,15 +170,47 @@ with tab1:
                         color = ''
                         if '초기포착' in str(val):
                             color = 'background-color: #e6fffa; color: #006644' # 민트/초록
-                        elif '추세확정' in str(val):
-                            color = 'background-color: #fff0f0; color: #cc0000' # 연한 빨강
-                        elif '과열' in str(val):
-                            color = 'background-color: #fff5e6; color: #993300' # 주황
                         return color
 
                     st.dataframe(p2_display.style.applymap(highlight_stage, subset=['진입단계']), use_container_width=True)
                 else:
-                    st.info("P2 조건(양매수 & Top 50 교집합)을 만족하는 종목이 없습니다.")
+                    st.info("P2 조건(양매수/초기포착)을 만족하는 종목이 없습니다.")
+
+                # --- P3 결과 처리 ---
+                st.subheader("♻️ P3: 바닥 반등주 (Rebound)")
+                
+                if hasattr(scanner, 'filter_p3_stocks'):
+                    p3_final = scanner.filter_p3_stocks(all_results)
+                else:
+                    p3_final = pd.DataFrame() # 로직이 없을 경우 대비
+                    
+                if not p3_final.empty:
+                    # 포맷팅
+                    cols = ['code', 'name', 'reasons', '이격도', '외국인순매수', '등락률', '현재가']
+                    display_cols = [c for c in cols if c in p3_final.columns]
+                    
+                    p3_display = p3_final[display_cols].copy()
+                    
+                    # 컬럼명 매핑
+                    col_map_p3 = {
+                        'code': '종목코드', 'name': '종목명', 'reasons': '포착사유',
+                        '외국인순매수': '외인순매수'
+                    }
+                    p3_display = p3_display.rename(columns=col_map_p3)
+                    
+                    # 숫자 포맷팅
+                    if '외인순매수' in p3_display.columns:
+                        p3_display['외인순매수'] = p3_display['외인순매수'].apply(lambda x: f"{x/100000000:.1f}억")
+                    if '이격도' in p3_display.columns:
+                        p3_display['이격도'] = p3_display['이격도'].apply(lambda x: f"{x:.1f}%")
+                    if '등락률' in p3_display.columns:
+                        p3_display['등락률'] = p3_display['등락률'].apply(lambda x: f"{x:.2f}%")
+                    if '현재가' in p3_display.columns:
+                        p3_display['현재가'] = p3_display['현재가'].apply(lambda x: f"{x:,}원")
+                    
+                    st.dataframe(p3_display, use_container_width=True)
+                else:
+                    st.info("P3 조건(이격98%이하 & 외인2일매수 & 양봉)을 만족하는 종목이 없습니다.")
             
             progress_bar.progress(100)
             status_text.text("분석 완료!")

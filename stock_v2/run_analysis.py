@@ -12,14 +12,11 @@ def main():
     print("=== Stock Analysis V2 (P1 & P2) ===")
     
     scanner = MarketScanner()
-    target_date = datetime.now() # Or specific date
-    # For testing, we might want to use the date from the context or let it default to today/yesterday
-    # But since today is Saturday (2026-01-03), the last market day was 2026-01-02.
-    # The scanner usually handles "latest available" or we can specify.
-    # Let's use a fixed date for now or logic to find last business day if needed.
-    # But run_scan takes target_date. If None, it might default to something or fail.
-    # Let's set it to 2026-01-02 as per user context.
-    target_date = datetime(2026, 1, 2)
+    
+    # [수정] 오늘 날짜(2026-01-05) 기준으로 분석
+    target_date = datetime.now()
+    # 만약 장 중이거나 데이터가 아직 없다면 전일자로 설정하는 로직이 필요할 수 있음
+    # 여기서는 실행 시점의 날짜를 사용
     
     print(f"Target Date: {target_date.strftime('%Y-%m-%d')}")
     
